@@ -255,7 +255,7 @@ public class MyState {
 
         public ClassDefinition() throws IOException {
             this.key = "org.sample.SampleClass";
-            InputStream is = new FileInputStream("/home/serkan/ideaprojects/test/src/main/java/org/sample/SampleClass.class");
+            InputStream is = new FileInputStream("src/main/java/org/sample/SampleClass.class");
             this.value = toByteArray(is);
         }
 
