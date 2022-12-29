@@ -15,21 +15,16 @@ import java.util.concurrent.TimeUnit;
 
 public class MyBenchmark {
     @Benchmark
-    @Fork(value = 1, warmups = 0)
-    @Warmup(iterations = 1, time = 100, timeUnit = TimeUnit.MILLISECONDS)
-    @Measurement(iterations = 1, time = 100, timeUnit = TimeUnit.MILLISECONDS)
-    @BenchmarkMode(Mode.SingleShotTime)
+    @BenchmarkMode(Mode.SampleTime)
     public void testMethod(MyState state) throws ExecutionException, InterruptedException {
         state.sendStateToCluster();
     }
 
-//    @Benchmark
-//    @Warmup(iterations = 0, time = 100, timeUnit = TimeUnit.MILLISECONDS)
-//    @Measurement(iterations = 1, time = 100, timeUnit = TimeUnit.MILLISECONDS)
-//    @BenchmarkMode(Mode.SingleShotTime)
-//    public void testMethodMaster(MyState state) throws ExecutionException, InterruptedException {
-//        state.sendStateToClusterMaster();
-//    }
+    @Benchmark
+    @BenchmarkMode(Mode.SampleTime)
+    public void testMethodMaster(MyState state) throws ExecutionException, InterruptedException {
+        state.sendStateToClusterMaster();
+    }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

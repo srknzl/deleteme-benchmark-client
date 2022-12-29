@@ -5,17 +5,19 @@ import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.impl.protocol.ClientMessage;
+import com.hazelcast.client.impl.protocol.codec.CacheCreateConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.ClientDeployClassesCodec;
 import com.hazelcast.client.impl.protocol.codec.ClientSendAllSchemasCodec;
+import com.hazelcast.client.impl.protocol.codec.holder.CacheConfigHolder;
 import com.hazelcast.client.impl.spi.ProxyManager;
 import com.hazelcast.client.impl.spi.impl.ClientExecutionServiceImpl;
 import com.hazelcast.client.impl.spi.impl.ClientInvocation;
 import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.client.map.impl.querycache.ClientQueryCacheContext;
-import com.hazelcast.config.Config;
+import com.hazelcast.config.CacheConfig;
 import com.hazelcast.config.QueryCacheConfig;
-import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.compact.Schema;
 import com.hazelcast.internal.serialization.impl.compact.SchemaWriter;
 import com.hazelcast.internal.util.UuidUtil;
@@ -27,11 +29,6 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 
-import javax.cache.CacheManager;
-import javax.cache.Caching;
-import javax.cache.configuration.CompleteConfiguration;
-import javax.cache.configuration.MutableConfiguration;
-import javax.cache.spi.CachingProvider;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,24 +40,25 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.Future;
 
 import static com.hazelcast.internal.nio.IOUtil.toByteArray;
+import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 
 @State(Scope.Thread)
 public class MyState {
     private static HazelcastClientInstanceImpl client;
-    private static HazelcastInstance member;
     private static ClientExecutionServiceImpl taskScheduler;
     private static ClientQueryCacheContext queryCacheContext;
     private static ProxyManager proxyManager;
-    private static CacheManager cacheManager;
+    private static final List<CacheConfig> cacheConfigs = new ArrayList<>();
     private static final Map<Long, Schema> schemas = new HashMap<>();
     private static final List<Map.Entry<String, byte[]>> classDefinitionList = new ArrayList<>();
-    private static final int NUMBER_OF_USER_DEPLOYMENT_ENTRIES = 1; // 10
-    private static final int NUMBER_OF_COMPACT_SCHEMAS = 1; // 100
-    private static final int NUMBER_OF_QUERY_CACHES = 1; // 100
-    private static final int NUMBER_OF_MAP_PROXIES = 1; // 10000
-    private static final int NUMBER_OF_CACHES = 1; // 1000
+    private static final int NUMBER_OF_USER_DEPLOYMENT_ENTRIES = 10;
+    private static final int NUMBER_OF_COMPACT_SCHEMAS = 100;
+    private static final int NUMBER_OF_QUERY_CACHES = 100;
+    private static final int NUMBER_OF_MAP_PROXIES = 10000;
+    private static final int NUMBER_OF_CACHES = 1000;
     private static final String MAP_PREFIX = "map-name-";
     private static final String CACHE_PREFIX = "cache-name-";
     private static final String QUERY_CACHE_NAME = "cache-name";
@@ -68,32 +66,27 @@ public class MyState {
 
     @Setup(Level.Trial)
     public void doSetup() throws IOException {
-        Config config = new Config();
-        config.getUserCodeDeploymentConfig().setEnabled(true);
-        member = Hazelcast.newHazelcastInstance(config);
         ClientConfig clientConfig = new ClientConfig();
         clientConfig.getUserCodeDeploymentConfig().setEnabled(true);
         configureQueryCaches(clientConfig);
+        configureICaches();
         HazelcastInstance hzInstanceClient = HazelcastClient.newHazelcastClient(clientConfig);
         client = getHazelcastClientInstanceImpl(hzInstanceClient);
-        taskScheduler = (ClientExecutionServiceImpl)client.getTaskScheduler();
+        taskScheduler = (ClientExecutionServiceImpl) client.getTaskScheduler();
         queryCacheContext = client.getQueryCacheContext();
         proxyManager = client.getProxyManager();
         populateClassDefinitionForUserCodeDeployment();
         populateCompactSchemas();
         createQueryCaches();
         createProxies();
-        // We destroy proxies from member because we will recreate them.
-        destroyProxiesFromMember(member);
     }
 
 
     @TearDown(Level.Trial)
     public void doTearDown() {
-        destroyCaches();
+        // destroyCaches();
         client.shutdown();
         taskScheduler.shutdown();
-        member.shutdown();
     }
 
     private static HazelcastClientInstanceImpl getHazelcastClientInstanceImpl(HazelcastInstance client) {
@@ -137,6 +130,8 @@ public class MyState {
         });
         tasks.add(() -> {
             proxyManager.createDistributedObjectsOnCluster();
+            // Since there is no cache, we will just send invocations for each cache.
+            recreateCaches();
             return null;
         });
         for (Callable<Void> task : tasks) {
@@ -152,38 +147,54 @@ public class MyState {
         sendAllSchemas();
         queryCacheContext.recreateAllCaches();
         proxyManager.createDistributedObjectsOnCluster();
+        // Since there is no cache, we will just send invocations for each cache.
+        recreateCaches();
     }
 
     private static String randomString() {
         return UuidUtil.newUnsecureUuidString();
     }
 
-    private static void destroyProxiesFromMember(HazelcastInstance member) {
-        for (int i = 0; i < NUMBER_OF_MAP_PROXIES; i++) {
-            member.getMap(MAP_PREFIX + i).destroy();
-        }
-        for (int i = 0; i < NUMBER_OF_CACHES; i++) {
-            member.getCacheManager().getCache(CACHE_PREFIX + i).destroy();
-        }
-    }
-
-    private static void destroyCaches() {
-        for (int i = 0; i < NUMBER_OF_CACHES; i++) {
-            cacheManager.destroyCache(CACHE_PREFIX + i);
-        }
-    }
-
     private static void createProxies() {
         for (int i = 0; i < NUMBER_OF_MAP_PROXIES; i++) {
             client.getMap(MAP_PREFIX + i);
         }
-        for (int i = 0; i < NUMBER_OF_CACHES; i++) {
-            CachingProvider cachingProvider = Caching.getCachingProvider();
-            cacheManager = cachingProvider.getCacheManager();
-            CompleteConfiguration<Integer, Integer> config = new MutableConfiguration<Integer, Integer>()
-                    .setTypes(Integer.class, Integer.class);
-            cacheManager.createCache(CACHE_PREFIX + i, config);
-            client.getCacheManager().getCache(CACHE_PREFIX + i);
+    }
+
+    private static void recreateCaches() throws InterruptedException, ExecutionException {
+        CompletionService<Void> completionService = new ExecutorCompletionService<>(client.getTaskScheduler());
+        int numberOfTasks = 0;
+        for (CacheConfig cacheConfig : cacheConfigs) {
+            numberOfTasks++;
+            completionService.submit(() -> {
+                createCacheConfig(client, cacheConfig, true);
+                return null;
+            });
+        }
+        for (int i = 0; i < numberOfTasks; i++) {
+            completionService.take().get();
+        }
+    }
+
+    private static  <K, V> CacheConfig<K, V> createCacheConfig(HazelcastClientInstanceImpl client,
+                                          CacheConfig<K, V> newCacheConfig, boolean urgent) {
+        try {
+            String nameWithPrefix = newCacheConfig.getNameWithPrefix();
+            int partitionId = client.getClientPartitionService().getPartitionId(nameWithPrefix);
+
+            InternalSerializationService serializationService = client.getSerializationService();
+            ClientMessage request = CacheCreateConfigCodec
+                    .encodeRequest(CacheConfigHolder.of(newCacheConfig, serializationService), true);
+            ClientInvocation clientInvocation = new ClientInvocation(client, request, nameWithPrefix, partitionId);
+            Future<ClientMessage> future = urgent ? clientInvocation.invokeUrgent() : clientInvocation.invoke();
+            final ClientMessage response = future.get();
+            final CacheConfigHolder cacheConfigHolder = CacheCreateConfigCodec.decodeResponse(response);
+            if (cacheConfigHolder == null) {
+                return null;
+            }
+            return cacheConfigHolder.asCacheConfig(serializationService);
+        } catch (Exception e) {
+            throw rethrow(e);
         }
     }
 
@@ -199,6 +210,13 @@ public class MyState {
             QueryCacheConfig queryCacheConfig = new QueryCacheConfig(QUERY_CACHE_NAME);
             queryCacheConfig.getPredicateConfig().setImplementation(Predicates.greaterThan("this", 10));
             clientConfig.addQueryCacheConfig(MAP_PREFIX + i, queryCacheConfig);
+        }
+    }
+
+    private static void configureICaches() {
+        for (int i = 0; i < NUMBER_OF_CACHES; i++) {
+            CacheConfig<Integer, Integer> cacheConfig = new CacheConfig<>(CACHE_PREFIX + i);
+            cacheConfigs.add(cacheConfig);
         }
     }
 
