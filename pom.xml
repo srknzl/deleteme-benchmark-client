@@ -12,7 +12,7 @@
     <repositories>
         <repository>
             <id>my-local-repo</id>
-            <url>/home/serkan/.m2</url>
+            <url>${user.home}/.m2</url>
         </repository>
     </repositories>
 
