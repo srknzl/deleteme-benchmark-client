@@ -56,9 +56,9 @@ public class MyState {
     private static final List<Map.Entry<String, byte[]>> classDefinitionList = new ArrayList<>();
     private static final int NUMBER_OF_USER_DEPLOYMENT_ENTRIES = 10;
     private static final int NUMBER_OF_COMPACT_SCHEMAS = 100;
-    private static final int NUMBER_OF_QUERY_CACHES = 10;
+    private static final int NUMBER_OF_QUERY_CACHES = 0;
     private static final int NUMBER_OF_MAP_PROXIES = 1000;
-    private static final int NUMBER_OF_CACHES = 100;
+    private static final int NUMBER_OF_CACHES = 0;
     private static final String MAP_PREFIX = "map-name-";
     private static final String CACHE_PREFIX = "cache-name-";
     private static final String QUERY_CACHE_NAME = "cache-name";
