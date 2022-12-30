@@ -67,6 +67,8 @@ public class MyState {
     @Setup(Level.Trial)
     public void doSetup() throws IOException {
         ClientConfig clientConfig = new ClientConfig();
+        String clusterIp = System.getProperty("clusterIp");
+        clientConfig.getNetworkConfig().addAddress(clusterIp);
         clientConfig.getUserCodeDeploymentConfig().setEnabled(true);
         configureQueryCaches(clientConfig);
         configureICaches();
