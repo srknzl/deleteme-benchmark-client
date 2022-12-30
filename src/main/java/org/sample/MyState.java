@@ -150,7 +150,7 @@ public class MyState {
         queryCacheContext.recreateAllCaches();
         proxyManager.createDistributedObjectsOnCluster();
         // Since there is no cache, we will just send invocations for each cache.
-        recreateCaches();
+        recreateCachesSerial();
     }
 
     private static String randomString() {
@@ -175,6 +175,12 @@ public class MyState {
         }
         for (int i = 0; i < numberOfTasks; i++) {
             completionService.take().get();
+        }
+    }
+
+    private static void recreateCachesSerial() {
+        for (CacheConfig cacheConfig : cacheConfigs) {
+            createCacheConfig(client, cacheConfig, true);
         }
     }
 
